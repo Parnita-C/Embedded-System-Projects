@@ -36,7 +36,7 @@
 /* -----------------------------------------------------------------------
  * Configuration — update these for your network and server
  * ----------------------------------------------------------------------- */
-#define WIFI_SSID        "YourSSID"
+#define WIFI_SSID        "Parnita's iPhone"
 #define WIFI_PASSWORD    "YourPassword"
 #define SECURITY_TYPE    SL_SEC_TYPE_WPA_WPA2
 

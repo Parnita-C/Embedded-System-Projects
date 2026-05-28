@@ -1,17 +1,31 @@
 /*
  * pin_mux_config.c
  *
- * Smart IoT Fitness Trainer - CC3200 LaunchXL
- * PINMUX Configuration (CC3200SDK_1.4.0)
+ * Smart IoT Fitness Trainer — CC3200 LaunchXL  |  CC3200SDK_1.4.0
  *
- * Pin Assignments:
- *   I2C  - SCL: Pin 1 (Dev Pin 1), SDA: Pin 2 (Dev Pin 2)    Accelerometer (BMA222)
- *   SPI  - CLK: Pin 5, CS: Pin 8, DOUT: Pin 7, DIN: Pin 6    OLED Display (SSD1351)
- *   GPIO - Pin 15 (Dev Pin 22)   IR Sensor Input (digital)
- *   GPIO - Pin 4  (P1, Dev 4)    SW2 (Mode Select Button)
- *   GPIO - Pin 15 (P2, Dev 22)   SW3 (Start/Stop Button)
+ * Extends the base Lab 4 PinMuxConfig() (UART only) to add:
+ *   I2C  — accelerometer (BMA222, onboard)
+ *   SPI  — OLED display  (SSD1351, Adafruit 128×128)
+ *   GPIO — OLED D/C, OLED RESET, IR sensor input, SW2, SW3
  *
- * Reference: CC3200 LaunchXL pin_config.pdf (P1/P2/P3/P4 headers)
+ * Pin summary
+ * ──────────────────────────────────────────────────────────────────────
+ *  Signal          Phys  Dev   Header  Mode  Notes
+ *  ──────────────────────────────────────────────────────────────────
+ *  UART0 TX        55    55    P2      3     Debug console (from Lab 4)
+ *  UART0 RX        57    57    P2      3     Debug console (from Lab 4)
+ *  I2C SCL          1     1    P1      1     Accel SCL
+ *  I2C SDA          2     2    P1      1     Accel SDA
+ *  SPI CLK          5     5    P1      7     OLED CLK
+ *  SPI MOSI (DOUT)  7     7    P2      7     OLED data
+ *  SPI MISO (DIN)   6     6    P2      7     OLED (unused, wired anyway)
+ *  SPI CS           8     8    P2      7     OLED chip-select
+ *  OLED D/C        61    61    P1      0     GPIO output
+ *  OLED RESET      62    62    P1      0     GPIO output
+ *  IR sensor       15    22    P2      0     GPIO input (active LOW)
+ *  SW2 (Mode)       4     4    P1      0     GPIO input, pull-up
+ *  SW3 (Start)     16    55    P2      0     GPIO input, pull-up
+ * ──────────────────────────────────────────────────────────────────────
  */
 
 #include "pin_mux_config.h"
@@ -24,7 +38,9 @@
 
 void PinMuxConfig(void)
 {
-    /* Enable peripheral clocks */
+    /* ---------------------------------------------------------------
+     * Enable peripheral clocks
+     * --------------------------------------------------------------- */
     PRCMPeripheralClkEnable(PRCM_UARTA0, PRCM_RUN_MODE_CLK);
     PRCMPeripheralClkEnable(PRCM_GSPI,   PRCM_RUN_MODE_CLK);
     PRCMPeripheralClkEnable(PRCM_I2CA0,  PRCM_RUN_MODE_CLK);
@@ -33,34 +49,34 @@ void PinMuxConfig(void)
     PRCMPeripheralClkEnable(PRCM_GPIOA2, PRCM_RUN_MODE_CLK);
     PRCMPeripheralClkEnable(PRCM_GPIOA3, PRCM_RUN_MODE_CLK);
 
-    /* UART0 � Debug console (Pin 55 = TX, Pin 57 = RX) */
-    PinTypeUART(PIN_55, PIN_MODE_3);
-    PinTypeUART(PIN_57, PIN_MODE_3);
-
     /* ---------------------------------------------------------------
-     * I2C   Accelerometer (BMA222, onboard)
-     *   SCL   Pin 1  (Dev Pin 1)  MODE_1 = I2C SCL
-     *   SDA   Pin 2  (Dev Pin 2)  MODE_1 = I2C SDA
+     * UART0 — debug console (from Lab 4 pinmux.c, unchanged)
      * --------------------------------------------------------------- */
-    PinTypeI2C(PIN_01, PIN_MODE_1);   /* I2C SCL */
-    PinTypeI2C(PIN_02, PIN_MODE_1);   /* I2C SDA */
+    PinTypeUART(PIN_55, PIN_MODE_3);   /* UART0 TX */
+    PinTypeUART(PIN_57, PIN_MODE_3);   /* UART0 RX */
 
     /* ---------------------------------------------------------------
-     * SPI   OLED Display (SSD1351 / Adafruit 128x128)
-     *   CLK     Pin 5  (P1/Dev 5)   MODE_7 = SPI CLK
-     *   CS      Pin 8  (P2/Dev 8)   MODE_7 = SPI CS
-     *   DOUT    Pin 7  (P2/Dev 7)   MODE_7 = SPI DOUT (MOSI)
-     *   DIN     Pin 6  (P2/Dev 6)   MODE_7 = SPI DIN  (MISO, unused but configured)
+     * I2C — BMA222 accelerometer (onboard)
+     *   Pin 1 → I2C SCL  (PIN_MODE_1)
+     *   Pin 2 → I2C SDA  (PIN_MODE_1)
      * --------------------------------------------------------------- */
-    PinTypeSPI(PIN_05, PIN_MODE_7);   /* SPI CLK  */
-    PinTypeSPI(PIN_07, PIN_MODE_7);   /* SPI DOUT (MOSI) */
-    PinTypeSPI(PIN_06, PIN_MODE_7);   /* SPI DIN  (MISO) */
-    PinTypeSPI(PIN_08, PIN_MODE_7);   /* SPI CS   */
+    PinTypeI2C(PIN_01, PIN_MODE_1);
+    PinTypeI2C(PIN_02, PIN_MODE_1);
 
     /* ---------------------------------------------------------------
-     * GPIO   OLED control lines (D/C and RESET)
-     *   OLED D/C     Pin 61 (P1/Dev 61, GPIO 6)
-     *   OLED RESET   Pin 62 (P1/Dev 62, GPIO 7)
+     * SPI (GSPI) — SSD1351 OLED display
+     *   Pin 5  → CLK   (PIN_MODE_7)
+     *   Pin 7  → MOSI  (PIN_MODE_7)
+     *   Pin 6  → MISO  (PIN_MODE_7)  [unused by SSD1351, configured anyway]
+     *   Pin 8  → CS    (PIN_MODE_7)
+     * --------------------------------------------------------------- */
+    PinTypeSPI(PIN_05, PIN_MODE_7);
+    PinTypeSPI(PIN_07, PIN_MODE_7);
+    PinTypeSPI(PIN_06, PIN_MODE_7);
+    PinTypeSPI(PIN_08, PIN_MODE_7);
+
+    /* ---------------------------------------------------------------
+     * GPIO — OLED D/C (Pin 61, GPIO 6) and RESET (Pin 62, GPIO 7)
      * --------------------------------------------------------------- */
     PinTypeGPIO(PIN_61, PIN_MODE_0, false);
     GPIODirModeSet(GPIOA0_BASE, GPIO_PIN_6, GPIO_DIR_MODE_OUT);
@@ -69,23 +85,22 @@ void PinMuxConfig(void)
     GPIODirModeSet(GPIOA0_BASE, GPIO_PIN_7, GPIO_DIR_MODE_OUT);
 
     /* ---------------------------------------------------------------
-     * GPIO   IR Proximity Sensor (digital input)
-     *   IR_IN   Pin 15 (P2/Dev 22, GPIO 22)
-     *   Active LOW when object detected (open-collector IR module)
+     * GPIO — IR Proximity Sensor (Pin 15, GPIO 22) — digital input
      * --------------------------------------------------------------- */
     PinTypeGPIO(PIN_15, PIN_MODE_0, false);
     GPIODirModeSet(GPIOA2_BASE, GPIO_PIN_6, GPIO_DIR_MODE_IN);
 
     /* ---------------------------------------------------------------
-     * GPIO   Push Buttons (active LOW, internal pull-up)
-     *   SW2 (Mode Select)    Pin 4  (P1/Dev 4,  GPIO 13)
-     *   SW3 (Start/Stop)     Pin 16 (P2/Dev 55, GPIO 17)   onboard SW3
+     * GPIO — SW2 (Pin 4, GPIO 13) — input with pull-up
      * --------------------------------------------------------------- */
     PinTypeGPIO(PIN_04, PIN_MODE_0, false);
     GPIODirModeSet(GPIOA1_BASE, GPIO_PIN_5, GPIO_DIR_MODE_IN);
-    PinConfigSet(PIN_04, PIN_STRENGTH_2MA, PIN_TYPE_STD_PU);  /* pull-up */
+    PinConfigSet(PIN_04, PIN_STRENGTH_2MA, PIN_TYPE_STD_PU);
 
+    /* ---------------------------------------------------------------
+     * GPIO — SW3 (Pin 16, GPIO 17) — input with pull-up
+     * --------------------------------------------------------------- */
     PinTypeGPIO(PIN_16, PIN_MODE_0, false);
     GPIODirModeSet(GPIOA2_BASE, GPIO_PIN_1, GPIO_DIR_MODE_IN);
-    PinConfigSet(PIN_16, PIN_STRENGTH_2MA, PIN_TYPE_STD_PU);  /* pull-up */
+    PinConfigSet(PIN_16, PIN_STRENGTH_2MA, PIN_TYPE_STD_PU);
 }

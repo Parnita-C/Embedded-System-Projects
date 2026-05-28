@@ -26,11 +26,13 @@ main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/rom_patch.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/interrupt.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/prcm.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/timer.h
+main.obj: ../gpio_if.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/gpio.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/spi.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/i2c_if.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/uart_if.h
-main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/utils_if.h
+main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/utils.h
+main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/pin.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/include/simplelink.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/user.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/cc_pal.h
@@ -46,6 +48,8 @@ main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/include/device.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/include/netcfg.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/include/wlan_rx_filters.h
 main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/source/nonos.h
+main.obj: ../utils/network_utils.h
+main.obj: C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/common.h
 main.obj: ../pin_mux_config.h
 main.obj: ../accelerometer.h
 main.obj: ../ir_sensor.h
@@ -104,6 +108,8 @@ C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/prcm.h:
 
 C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/timer.h:
 
+../gpio_if.h:
+
 C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/gpio.h:
 
 C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/spi.h:
@@ -112,7 +118,9 @@ C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/i2c_if.h:
 
 C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/uart_if.h:
 
-C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/utils_if.h:
+C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/utils.h:
+
+C:/TI/CC3200SDK_1.4.0/cc3200-sdk/driverlib/pin.h:
 
 C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/include/simplelink.h:
 
@@ -143,6 +151,10 @@ C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/include/netcfg.h:
 C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/include/wlan_rx_filters.h:
 
 C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/source/nonos.h:
+
+../utils/network_utils.h:
+
+C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/common.h:
 
 ../pin_mux_config.h:
 

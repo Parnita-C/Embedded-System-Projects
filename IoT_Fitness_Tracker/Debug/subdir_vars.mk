@@ -10,11 +10,11 @@ CMD_SRCS += \
 
 C_SRCS += \
 ../accelerometer.c \
+C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/gpio_if.c \
 C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/i2c_if.c \
 ../ir_sensor.c \
 ../main.c \
 C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/network_common.c \
-C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/network_if.c \
 ../oled.c \
 ../pin_mux_config.c \
 C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/startup_ccs.c \
@@ -24,11 +24,11 @@ C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/utils_if.c \
 
 C_DEPS += \
 ./accelerometer.d \
+./gpio_if.d \
 ./i2c_if.d \
 ./ir_sensor.d \
 ./main.d \
 ./network_common.d \
-./network_if.d \
 ./oled.d \
 ./pin_mux_config.d \
 ./startup_ccs.d \
@@ -38,11 +38,11 @@ C_DEPS += \
 
 OBJS += \
 ./accelerometer.obj \
+./gpio_if.obj \
 ./i2c_if.obj \
 ./ir_sensor.obj \
 ./main.obj \
 ./network_common.obj \
-./network_if.obj \
 ./oled.obj \
 ./pin_mux_config.obj \
 ./startup_ccs.obj \
@@ -52,11 +52,11 @@ OBJS += \
 
 OBJS__QUOTED += \
 "accelerometer.obj" \
+"gpio_if.obj" \
 "i2c_if.obj" \
 "ir_sensor.obj" \
 "main.obj" \
 "network_common.obj" \
-"network_if.obj" \
 "oled.obj" \
 "pin_mux_config.obj" \
 "startup_ccs.obj" \
@@ -66,11 +66,11 @@ OBJS__QUOTED += \
 
 C_DEPS__QUOTED += \
 "accelerometer.d" \
+"gpio_if.d" \
 "i2c_if.d" \
 "ir_sensor.d" \
 "main.d" \
 "network_common.d" \
-"network_if.d" \
 "oled.d" \
 "pin_mux_config.d" \
 "startup_ccs.d" \
@@ -80,11 +80,11 @@ C_DEPS__QUOTED += \
 
 C_SRCS__QUOTED += \
 "../accelerometer.c" \
+"C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/gpio_if.c" \
 "C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/i2c_if.c" \
 "../ir_sensor.c" \
 "../main.c" \
 "C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/network_common.c" \
-"C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/network_if.c" \
 "../oled.c" \
 "../pin_mux_config.c" \
 "C:/TI/CC3200SDK_1.4.0/cc3200-sdk/example/common/startup_ccs.c" \

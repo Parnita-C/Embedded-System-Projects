@@ -11,17 +11,18 @@ GEN_CMDS__FLAG :=
 
 ORDERED_OBJS += \
 "./accelerometer.obj" \
+"./gpio_if.obj" \
 "./i2c_if.obj" \
 "./ir_sensor.obj" \
 "./main.obj" \
 "./network_common.obj" \
-"./network_if.obj" \
 "./oled.obj" \
 "./pin_mux_config.obj" \
 "./startup_ccs.obj" \
 "./uart_if.obj" \
 "./utils_if.obj" \
 "./wifi_upload.obj" \
+"./utils/network_utils.obj" \
 "../cc3200v1p32.cmd" \
 $(GEN_CMDS__FLAG) \
 -l"C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/ccs/NON_OS_debug/simplelink.a" \
@@ -36,7 +37,9 @@ RMDIR := RMDIR /S/Q
 # All of the sources participating in the build are defined here
 -include sources.mk
 -include subdir_vars.mk
+-include utils/subdir_vars.mk
 -include subdir_rules.mk
+-include utils/subdir_rules.mk
 -include objects.mk
 
 ifneq ($(MAKECMDGOALS),clean)
@@ -133,35 +136,35 @@ endif
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXE_OUTPUTS += \
-serial_wifi.out \
+IoT_Fitness_Tracker.out \
 
 EXE_OUTPUTS__QUOTED += \
-"serial_wifi.out" \
+"IoT_Fitness_Tracker.out" \
 
 BIN_OUTPUTS += \
-serial_wifi.bin \
+IoT_Fitness_Tracker.bin \
 
 BIN_OUTPUTS__QUOTED += \
-"serial_wifi.bin" \
+"IoT_Fitness_Tracker.bin" \
 
 
 # All Target
 all: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
-	@$(MAKE) --no-print-directory -Onone "serial_wifi.out"
+	@$(MAKE) --no-print-directory -Onone "IoT_Fitness_Tracker.out"
 
 # Tool invocations
-serial_wifi.out: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
+IoT_Fitness_Tracker.out: $(OBJS) $(CMD_SRCS) $(GEN_CMDS)
 	@echo 'Building target: "$@"'
 	@echo 'Invoking: Arm Linker'
-	"C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7M4 --code_state=16 --float_support=none -me -Ooff --define=ccs --define=cc3200 --define=PLATFORM_LP --define=__CCS__ -g --diag_warning=225 --diag_wrap=off --display_error_number --abi=eabi -z -m"serial_wifi.map" --heap_size=0x8000 --stack_size=0x1000 -i"C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/lib" -i"C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/ccs/PM_Framework/" -i"C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" --reread_libs --diag_wrap=off --display_error_number --warn_sections --xml_link_info="serial_wifi_linkInfo.xml" --rom_model -o "serial_wifi.out" $(ORDERED_OBJS)
+	"C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armcl" -mv7M4 --code_state=16 --float_support=none -me -Ooff --define=ccs --define=cc3200 --define=PLATFORM_LP --define=__CCS__ -g --diag_warning=225 --diag_wrap=off --display_error_number --abi=eabi -z -m"IoT_Fitness_Tracker.map" --heap_size=0x8000 --stack_size=0x1000 -i"C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/lib" -i"C:/TI/CC3200SDK_1.4.0/cc3200-sdk/simplelink/ccs/PM_Framework/" -i"C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/include" --reread_libs --diag_wrap=off --display_error_number --warn_sections --xml_link_info="IoT_Fitness_Tracker_linkInfo.xml" --rom_model -o "IoT_Fitness_Tracker.out" $(ORDERED_OBJS)
 	@echo 'Finished building target: "$@"'
 	@echo ' '
 	@$(MAKE) --no-print-directory post-build
 
-serial_wifi.bin: $(EXE_OUTPUTS)
+IoT_Fitness_Tracker.bin: $(EXE_OUTPUTS)
 	@echo 'Building secondary target: "$@"'
 	@echo 'Invoking: Arm Hex Utility'
-	"C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armhex" --diag_wrap=off -o "serial_wifi.bin" $(EXE_OUTPUTS__QUOTED)
+	"C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armhex" --diag_wrap=off -o "IoT_Fitness_Tracker.bin" $(EXE_OUTPUTS__QUOTED)
 	@echo 'Finished building secondary target: "$@"'
 	@echo ' '
 	@$(MAKE) --no-print-directory post-build
@@ -169,13 +172,13 @@ serial_wifi.bin: $(EXE_OUTPUTS)
 # Other Targets
 clean:
 	-$(RM) $(BIN_OUTPUTS__QUOTED)$(EXE_OUTPUTS__QUOTED)
-	-$(RM) "accelerometer.obj" "i2c_if.obj" "ir_sensor.obj" "main.obj" "network_common.obj" "network_if.obj" "oled.obj" "pin_mux_config.obj" "startup_ccs.obj" "uart_if.obj" "utils_if.obj" "wifi_upload.obj" 
-	-$(RM) "accelerometer.d" "i2c_if.d" "ir_sensor.d" "main.d" "network_common.d" "network_if.d" "oled.d" "pin_mux_config.d" "startup_ccs.d" "uart_if.d" "utils_if.d" "wifi_upload.d" 
+	-$(RM) "accelerometer.obj" "gpio_if.obj" "i2c_if.obj" "ir_sensor.obj" "main.obj" "network_common.obj" "oled.obj" "pin_mux_config.obj" "startup_ccs.obj" "uart_if.obj" "utils_if.obj" "wifi_upload.obj" "utils\network_utils.obj" 
+	-$(RM) "accelerometer.d" "gpio_if.d" "i2c_if.d" "ir_sensor.d" "main.d" "network_common.d" "oled.d" "pin_mux_config.d" "startup_ccs.d" "uart_if.d" "utils_if.d" "wifi_upload.d" "utils\network_utils.d" 
 	-@echo 'Finished clean'
 	-@echo ' '
 
 post-build:
-	-C:/TI/ccs1040/ccs/utils/tiobj2bin/tiobj2bin serial_wifi.out serial_wifi.bin C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armofd C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armhex C:/TI/ccs1040/ccs/utils/tiobj2bin/mkhex4bin
+	-C:/TI/ccs1040/ccs/utils/tiobj2bin/tiobj2bin IoT_Fitness_Tracker.out IoT_Fitness_Tracker.bin C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armofd C:/TI/ccs1040/ccs/tools/compiler/ti-cgt-arm_20.2.5.LTS/bin/armhex C:/TI/ccs1040/ccs/utils/tiobj2bin/mkhex4bin
 	-@echo ' '
 
 .PHONY: all clean dependents
