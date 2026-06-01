@@ -11,8 +11,8 @@
 	<rts value="libc.a"/>
 	<createSlaveProjects value=""/>
 	<ignoreDefaultDeviceSettings value="true"/>
-	<templateProperties value="id=serial_wifi.projectspec.serial_wifi,buildProfile=release"/>
-	<origin value="C:\TI\CC3200SDK_1.4.0\cc3200-sdk\example\serial_wifi\ccs\serial_wifi.projectspec"/>
+	<templateProperties value="id=i2c_demo.projectspec.i2c_demo,buildProfile=release"/>
+	<origin value="C:\TI\CC3200SDK_1.4.0\cc3200-sdk\example\i2c_demo\ccs\i2c_demo.projectspec"/>
 	<filesToOpen value=""/>
 	<isTargetManual value="false"/>
 </projectOptions>

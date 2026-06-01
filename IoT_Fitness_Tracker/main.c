@@ -1,40 +1,42 @@
-/*
- * main.c
- *
- * Smart Interactive IoT Fitness Trainer
- * CC3200 LaunchXL — CC3200SDK_1.4.0  |  CCS 10
- *
- * Authors: Parnita Chowtoori, Selena Phu  |  EEC 172 - A03
- *
- * AWS upload pattern taken from the SSL REST API demo used in Lab 4:
- *   - BoardInit / PinMuxConfig / InitTerm follow the lab template exactly.
- *   - TLS socket connect uses tls_connect() from network_utils.
- *   - HTTP POST uses the same header / body construction as http_post().
- *   - set_time() is called before any TLS operation, same as the lab.
- *
- * State Machine:
- *   IDLE → MODE_SELECT → (PUSHUP_TRACKING | RUNNING_TRACKING)
- *        → FEEDBACK → UPLOAD → IDLE
- *
- * Timers:
- *   TimerA0: 20 ms ISR — sensor sampling (IR + Accel) + button debounce
- *
- * Buttons:
- *   SW2 (GPIO 13, Pin 4):  cycle mode (MODE_SELECT) / stop session (TRACKING)
- *   SW3 (GPIO 17, Pin 16): start (IDLE) / confirm mode (MODE_SELECT)
- */
+//*****************************************************************************
+//
+// main.c
+//
+// CC3200 + BMA222 + SSD1351 OLED
+//
+// Modes:
+//   Button 1 / SW2 / GPIO22 / PIN_15:
+//      STEP MODE
+//      If already in STEP MODE, pressing again resets step count to zero.
+//
+//   Button 2 / SW3 / GPIO13 / PIN_04:
+//      PUSHUP MODE
+//      If already in PUSHUP MODE, pressing again resets pushup count to zero.
+//      Pushup logic is empty for now.
+//
+// Step logic:
+//   Standing  -> Z_deg near 90 degrees
+//   Stepping  -> Z_deg drops toward 40 degrees
+//   Step done -> Z_deg returns near 90 degrees
+//
+//   If Z_deg_filtered < 70 degrees -> step started
+//   If step started and Z_deg_filtered > 72 degrees -> count 1 step
+//
+//*****************************************************************************
 
-/* -----------------------------------------------------------------------
- * Standard includes
- * ----------------------------------------------------------------------- */
+// Standard includes
 #include <stdio.h>
 #include <string.h>
-#include <stdbool.h>
-#include <stdint.h>
+#include <stdlib.h>
+#include <math.h>
 
-/* -----------------------------------------------------------------------
- * CC3200 SDK — hardware abstraction
- * ----------------------------------------------------------------------- */
+// SimpleLink / AWS networking includes
+#include "simplelink.h"
+#include "gpio_if.h"
+#include "common.h"
+#include "utils/network_utils.h"
+
+// Driverlib includes
 #include "hw_types.h"
 #include "hw_ints.h"
 #include "hw_memmap.h"
@@ -43,514 +45,999 @@
 #include "rom_map.h"
 #include "interrupt.h"
 #include "prcm.h"
-#include "timer.h"
-#include "gpio_if.h"
-#include "gpio.h"
-#include "spi.h"
-#include "i2c_if.h"
-#include "uart_if.h"
 #include "utils.h"
+#include "uart.h"
+#include "gpio.h"
 #include "pin.h"
 
-/* -----------------------------------------------------------------------
- * SimpleLink / TLS — same pattern as Lab 4 SSL demo
- * ----------------------------------------------------------------------- */
-#include "simplelink.h"
-#include "utils/network_utils.h"   /* connectToAccessPoint, tls_connect */
+// Common interface includes
+#include "uart_if.h"
+#include "i2c_if.h"
 
-/* -----------------------------------------------------------------------
- * Project modules
- * ----------------------------------------------------------------------- */
-#include "pin_mux_config.h"
-#include "accelerometer.h"
-#include "ir_sensor.h"
-#include "oled.h"
-#include "wifi_upload.h"
+#include "pinmux.h"
+#include "oled_ssd1351.h"
 
-/* -----------------------------------------------------------------------
- * AWS / TLS configuration  — CHANGE ME
- * Mirrors the defines in the Lab 4 main.c exactly.
- * ----------------------------------------------------------------------- */
-#define DATE        22
-#define MONTH        5
-#define YEAR      2026
-#define HOUR        13
-#define MINUTE       0
-#define SECOND       0
+//*****************************************************************************
+// MACRO DEFINITIONS
+//*****************************************************************************
 
-#define APPLICATION_NAME    "FitnessTrainer"
-#define APPLICATION_VERSION "1.0"
+#define APPLICATION_VERSION              "1.5.0"
+#define APP_NAME                         "BMA222 Multi Mode Counter"
 
-/* AWS IoT endpoint and port (same as Lab 4) */
-#define SERVER_NAME     "a1a7laiiez8sbe-ats.iot.us-east-2.amazonaws.com"  /* CHANGE ME */
-#define GOOGLE_DST_PORT  8443
+#define UART_PRINT                       Report
+#define SUCCESS                          0
+#define FAILURE                          -1
 
-/* HTTP headers — CHANGE thing name to match your AWS thing */
-#define POSTHEADER  "POST /things/Ohio_Thing/shadow HTTP/1.1\r\n"          /* CHANGE ME */
-#define HOSTHEADER  "Host: a1a7laiiez8sbe-ats.iot.us-east-2.amazonaws.com\r\n" /* CHANGE ME */
-#define CHEADER     "Connection: Keep-Alive\r\n"
-#define CTHEADER    "Content-Type: application/json; charset=utf-8\r\n"
-#define CLHEADER1   "Content-Length: "
-#define CLHEADER2   "\r\n\r\n"
+//*****************************************************************************
+// AWS IOT DEFINITIONS
+//*****************************************************************************
 
-/* -----------------------------------------------------------------------
- * Application configuration
- * ----------------------------------------------------------------------- */
-#define TIMER_PERIOD_US     20000UL   /* 20 ms sampling interval          */
-#define SESSION_TIMEOUT_S   120       /* auto-stop after 2 min            */
-#define BTN_DEBOUNCE_TICKS  5         /* × 20 ms = 100 ms debounce        */
+#define DATE                30
+#define MONTH               5
+#define YEAR                2026
+#define HOUR                13
+#define MINUTE              0
+#define SECOND              0
 
-#define SW2_BASE   GPIOA1_BASE   // GPIO13
-#define SW2_PIN    GPIO_PIN_5
+#define SERVER_NAME         "a1a7laiiez8sbe-ats.iot.us-east-2.amazonaws.com"
+#define AWS_DST_PORT        8443
 
-#define SW3_BASE   GPIOA3_BASE   // GPIO17
-#define SW3_PIN    GPIO_PIN_1
-/* -----------------------------------------------------------------------
- * State machine
- * ----------------------------------------------------------------------- */
-typedef enum {
-    STATE_IDLE        = 0,
-    STATE_MODE_SELECT = 1,
-    STATE_PUSHUP_TRACK= 2,
-    STATE_RUNNING_TRACK=3,
-    STATE_FEEDBACK    = 4,
-    STATE_UPLOAD      = 5
-} AppState_t;
+#define POSTHEADER          "POST /things/Ohio_Thing/shadow HTTP/1.1\r\n"
+#define HOSTHEADER          "Host: a1a7laiiez8sbe-ats.iot.us-east-2.amazonaws.com\r\n"
+#define CHEADER             "Connection: Keep-Alive\r\n"
+#define CTHEADER            "Content-Type: application/json; charset=utf-8\r\n"
+#define CLHEADER1           "Content-Length: "
+#define CLHEADER2           "\r\n\r\n"
 
-/* -----------------------------------------------------------------------
- * Globals
- * ----------------------------------------------------------------------- */
-/* Vector table (required by CCS startup, same as Lab 4) */
-#if defined(ccs) || defined(gcc)
+
+//*****************************************************************************
+// BMA222 DEFINITIONS
+//*****************************************************************************
+
+#define BMA222_ADDR                      0x18
+#define BMA222_CHIP_ID                   0x00
+#define BMA222_DATA_START                0x02
+
+//*****************************************************************************
+// SAMPLING DEFINITIONS
+//*****************************************************************************
+
+#define SAMPLE_PERIOD_MS                 12.5f
+
+/*
+ * 12.5 ms sampling = 80 samples/second.
+ * delay_count = 80,000,000 * 0.0125 / 3 = 333,333
+ */
+#define SAMPLE_DELAY_CYCLES              333333
+
+/*
+ * 40 samples * 12.5 ms = 500 ms terminal print interval.
+ */
+#define TERMINAL_PRINT_INTERVAL_SAMPLES  40
+
+#define RAD_TO_DEG                       57.2957795f
+
+//*****************************************************************************
+// Z-ANGLE STEP COUNTER DEFINITIONS
+//*****************************************************************************
+
+#define Z_STEP_START_DEG                 70.0f
+#define Z_STEP_RETURN_DEG                72.0f
+
+/*
+ * 8 samples * 12.5 ms = 100 ms minimum between counted steps.
+ * 64 samples * 12.5 ms = 800 ms timeout.
+ */
+#define STEP_MIN_INTERVAL_SAMPLES        8
+#define STEP_MAX_ACTIVE_SAMPLES          64
+
+//*****************************************************************************
+// BUTTON DEFINITIONS
+//*****************************************************************************
+
+/*
+ * CC3200 LaunchPad onboard buttons:
+ *
+ * SW2 = GPIO22 = PIN_15
+ * SW3 = GPIO13 = PIN_04
+ *
+ * Buttons are active HIGH:
+ *   not pressed -> 0
+ *   pressed     -> 1
+ */
+#define BUTTON_STEP_PIN                  PIN_15
+#define BUTTON_STEP_PORT                 GPIOA2_BASE
+#define BUTTON_STEP_GPIO                 0x40
+
+#define BUTTON_PUSHUP_PIN                PIN_04
+#define BUTTON_PUSHUP_PORT               GPIOA1_BASE
+#define BUTTON_PUSHUP_GPIO               0x20
+
+/*
+ * 16 samples * 12.5 ms = 200 ms debounce/cooldown.
+ */
+#define BUTTON_COOLDOWN_SAMPLES          16
+
+#define IR_SENSOR_PIN                   PIN_18
+#define IR_SENSOR_PORT                  GPIOA3_BASE
+#define IR_SENSOR_GPIO                  0x10
+#define IR_SENSOR_PRCM                  PRCM_GPIOA3
+
+#define IR_SENSOR_ACTIVE_LOW            1
+
+#define PUSHUP_MIN_INTERVAL_SAMPLES     24
+
+//*****************************************************************************
+// GLOBAL VARIABLES
+//*****************************************************************************
+
+static int set_time(void);
+static int AWS_Init(void);
+static int AWS_PostCounter(const char *mode_name, unsigned long count_value);
+
+static int g_tls_sock_id = -1;
+static int g_aws_ready = 0;
+
+
+#if defined(ccs)
 extern void (* const g_pfnVectors[])(void);
 #endif
 
-static volatile AppState_t  g_state         = STATE_IDLE;
-static volatile WorkoutMode_t g_mode        = MODE_PUSHUP;
-static volatile uint32_t    g_tick_ms       = 0;
-static volatile uint32_t    g_session_start = 0;
-static volatile bool        g_sw2_event     = false;
-static volatile bool        g_sw3_event     = false;
-static volatile uint8_t     g_sw2_deb       = 0;
-static volatile uint8_t     g_sw3_deb       = 0;
+#if defined(ewarm)
+extern uVectorEntry __vector_table;
+#endif
 
-/* -----------------------------------------------------------------------
- * TimerA0 ISR — 20 ms
- * ----------------------------------------------------------------------- */
-void TimerA0ISR(void)
+typedef enum
 {
-    MAP_TimerIntClear(TIMERA0_BASE, TIMER_TIMA_TIMEOUT);
-    g_tick_ms += 20;
+    APP_MODE_STEP = 0,
+    APP_MODE_PUSHUP = 1
+} AppMode_t;
 
-    if (g_state == STATE_PUSHUP_TRACK)
-        IR_ProcessRep();
-    else if (g_state == STATE_RUNNING_TRACK)
-        Accel_ProcessStep(g_tick_ms);
+static AppMode_t current_mode = APP_MODE_STEP;
 
-    /* SW2 debounce (active LOW) */
-    if (!(MAP_GPIOPinRead(SW2_BASE, SW2_PIN)))
-    {
-        if (g_sw2_deb < BTN_DEBOUNCE_TICKS) g_sw2_deb++;
-        else { g_sw2_event = true; g_sw2_deb = 0; }
-    }
-    else g_sw2_deb = 0;
+// Step counter variables
+static float z_deg_filtered = 90.0f;
 
-    /* SW3 debounce (active LOW) */
-    if (!(MAP_GPIOPinRead(SW3_BASE, SW3_PIN)))
-    {
-        if (g_sw3_deb < BTN_DEBOUNCE_TICKS) g_sw3_deb++;
-        else { g_sw3_event = true; g_sw3_deb = 0; }
-    }
-    else g_sw3_deb = 0;
-}
+static unsigned long step_count = 0;
+static unsigned long sample_count = 0;
+static unsigned long last_step_sample = 0;
 
-/* -----------------------------------------------------------------------
- * Timer setup
- * ----------------------------------------------------------------------- */
-static void Timer_Init(void)
-{
-    MAP_PRCMPeripheralClkEnable(PRCM_TIMERA0, PRCM_RUN_MODE_CLK);
-    MAP_TimerConfigure(TIMERA0_BASE, TIMER_CFG_PERIODIC);
-    uint32_t load = MAP_PRCMPeripheralClockGet(PRCM_TIMERA0)
-                    / (1000000UL / TIMER_PERIOD_US);
-    MAP_TimerLoadSet(TIMERA0_BASE, TIMER_A, load);
-    MAP_TimerIntEnable(TIMERA0_BASE, TIMER_TIMA_TIMEOUT);
-    MAP_IntEnable(INT_TIMERA0A);
-    MAP_IntPrioritySet(INT_TIMERA0A, INT_PRIORITY_LVL_1);
-    MAP_TimerEnable(TIMERA0_BASE, TIMER_A);
-}
+static int step_active = 0;
+static unsigned long active_start_sample = 0;
 
-/* -----------------------------------------------------------------------
- * Board init — identical to Lab 4 BoardInit()
- * ----------------------------------------------------------------------- */
+// Pushup placeholder variables
+static unsigned long pushup_count = 0;
+static unsigned long pushup_sample_count = 0;
+static unsigned long last_pushup_sample = 0;
+
+static unsigned char floor_near_previous = 0;
+
+// Button edge detection
+static unsigned char button_step_previous = 0;
+static unsigned char button_pushup_previous = 0;
+
+static unsigned int button_step_cooldown = 0;
+static unsigned int button_pushup_cooldown = 0;
+
+//*****************************************************************************
+// BOARD INITIALIZATION
+//*****************************************************************************
+
 static void BoardInit(void)
 {
 #ifndef USE_TIRTOS
 #if defined(ccs)
     MAP_IntVTableBaseSet((unsigned long)&g_pfnVectors[0]);
 #endif
+
+#if defined(ewarm)
+    MAP_IntVTableBaseSet((unsigned long)&__vector_table);
 #endif
+#endif
+
     MAP_IntMasterEnable();
     MAP_IntEnable(FAULT_SYSTICK);
+
     PRCMCC3200MCUInit();
 }
 
-static void GPIO_Init(void)
-{
-    MAP_PRCMPeripheralClkEnable(PRCM_GPIOA1, PRCM_RUN_MODE_CLK);
-    MAP_PRCMPeripheralClkEnable(PRCM_GPIOA3, PRCM_RUN_MODE_CLK);
+//*****************************************************************************
+// UART BANNER
+//*****************************************************************************
 
-    MAP_GPIODirModeSet(GPIOA1_BASE, GPIO_PIN_5, GPIO_DIR_MODE_IN);
-    MAP_GPIODirModeSet(GPIOA3_BASE, GPIO_PIN_1, GPIO_DIR_MODE_IN);
+static void DisplayBanner(char *AppName)
+{
+    Report("\n\n\n\r");
+    Report("\t\t *************************************************\n\r");
+    Report("\t\t      CC3200 %s Application\n\r", AppName);
+    Report("\t\t *************************************************\n\r");
+    Report("\n\n\n\r");
 }
 
-/* -----------------------------------------------------------------------
- * set_time — identical to Lab 4, required before any TLS connect
- * ----------------------------------------------------------------------- */
+//*****************************************************************************
+// HELPER FUNCTIONS
+//*****************************************************************************
+
+static float clamp_float(float value, float min_value, float max_value)
+{
+    if(value < min_value)
+    {
+        return min_value;
+    }
+
+    if(value > max_value)
+    {
+        return max_value;
+    }
+
+    return value;
+}
+
+static float CalculateAxisAngleDeg(float axis_value, float x, float y, float z)
+{
+    float mag;
+    float ratio;
+    float angle_deg;
+
+    mag = sqrtf((x * x) + (y * y) + (z * z));
+
+    if(mag < 0.01f)
+    {
+        return 0.0f;
+    }
+
+    ratio = axis_value / mag;
+
+    ratio = clamp_float(ratio, -1.0f, 1.0f);
+
+    angle_deg = acosf(ratio) * RAD_TO_DEG;
+
+    return angle_deg;
+}
+
+//*****************************************************************************
+// BUTTON FUNCTIONS
+//*****************************************************************************
+
+static void Buttons_Init(void)
+{
+    MAP_PRCMPeripheralClkEnable(PRCM_GPIOA1, PRCM_RUN_MODE_CLK);
+    MAP_PRCMPeripheralClkEnable(PRCM_GPIOA2, PRCM_RUN_MODE_CLK);
+
+    MAP_PinTypeGPIO(BUTTON_STEP_PIN, PIN_MODE_0, 0);
+    MAP_PinTypeGPIO(BUTTON_PUSHUP_PIN, PIN_MODE_0, 0);
+
+    MAP_GPIODirModeSet(BUTTON_STEP_PORT,
+                       BUTTON_STEP_GPIO,
+                       GPIO_DIR_MODE_IN);
+
+    MAP_GPIODirModeSet(BUTTON_PUSHUP_PORT,
+                       BUTTON_PUSHUP_GPIO,
+                       GPIO_DIR_MODE_IN);
+}
+
+static unsigned char ButtonStep_IsPressed(void)
+{
+    if(MAP_GPIOPinRead(BUTTON_STEP_PORT, BUTTON_STEP_GPIO) & BUTTON_STEP_GPIO)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+static unsigned char ButtonPushup_IsPressed(void)
+{
+    if(MAP_GPIOPinRead(BUTTON_PUSHUP_PORT, BUTTON_PUSHUP_GPIO) & BUTTON_PUSHUP_GPIO)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+static unsigned char ButtonStep_PressedEvent(void)
+{
+    unsigned char current_state;
+    unsigned char event;
+
+    current_state = ButtonStep_IsPressed();
+    event = 0;
+
+    if(button_step_cooldown > 0)
+    {
+        button_step_cooldown--;
+    }
+    else
+    {
+        if((current_state == 1) && (button_step_previous == 0))
+        {
+            event = 1;
+            button_step_cooldown = BUTTON_COOLDOWN_SAMPLES;
+        }
+    }
+
+    button_step_previous = current_state;
+
+    return event;
+}
+
+static unsigned char ButtonPushup_PressedEvent(void)
+{
+    unsigned char current_state;
+    unsigned char event;
+
+    current_state = ButtonPushup_IsPressed();
+    event = 0;
+
+    if(button_pushup_cooldown > 0)
+    {
+        button_pushup_cooldown--;
+    }
+    else
+    {
+        if((current_state == 1) && (button_pushup_previous == 0))
+        {
+            event = 1;
+            button_pushup_cooldown = BUTTON_COOLDOWN_SAMPLES;
+        }
+    }
+
+    button_pushup_previous = current_state;
+
+    return event;
+}
+
+//*****************************************************************************
+// IR SENSOR FUNCTIONS
+//*****************************************************************************
+
+static void IRSensor_Init(void)
+{
+    MAP_PRCMPeripheralClkEnable(IR_SENSOR_PRCM, PRCM_RUN_MODE_CLK);
+
+    MAP_PinTypeGPIO(IR_SENSOR_PIN, PIN_MODE_0, 0);
+
+    MAP_GPIODirModeSet(IR_SENSOR_PORT,
+                       IR_SENSOR_GPIO,
+                       GPIO_DIR_MODE_IN);
+}
+
+static unsigned char IRSensor_IsFloorNear(void)
+{
+    unsigned long pin_value;
+
+    pin_value = MAP_GPIOPinRead(IR_SENSOR_PORT, IR_SENSOR_GPIO);
+
+#if IR_SENSOR_ACTIVE_LOW
+    if((pin_value & IR_SENSOR_GPIO) == 0)
+    {
+        return 1;
+    }
+    else
+    {
+        return 0;
+    }
+#else
+    if(pin_value & IR_SENSOR_GPIO)
+    {
+        return 1;
+    }
+    else
+    {
+        return 0;
+    }
+#endif
+}
+
+//*****************************************************************************
+// STEP COUNTER
+//*****************************************************************************
+
+static void StepCounter_Reset(void)
+{
+    z_deg_filtered = 90.0f;
+
+    step_count = 0;
+    sample_count = 0;
+    last_step_sample = 0;
+
+    step_active = 0;
+    active_start_sample = 0;
+
+    OLED_ShowStepCount(step_count);
+
+    Report("\n\rSTEP MODE selected/reset.\n\r");
+    Report("Step starts when Z_deg < %.2f degrees.\n\r", Z_STEP_START_DEG);
+    Report("Step counts when Z_deg returns > %.2f degrees.\n\r\n\r", Z_STEP_RETURN_DEG);
+}
+
+static void StepCounter_UpdateFromZAngle(float z_deg)
+{
+    sample_count++;
+
+    /*
+     * Fast filter for running.
+     * 0.25 = old value weight
+     * 0.75 = new value weight
+     */
+    z_deg_filtered = (0.25f * z_deg_filtered) + (0.75f * z_deg);
+
+    /*
+     * State 0:
+     * Wait for Z angle to drop below start threshold.
+     */
+    if(step_active == 0)
+    {
+        if((z_deg_filtered < Z_STEP_START_DEG) &&
+           ((sample_count - last_step_sample) >= STEP_MIN_INTERVAL_SAMPLES))
+        {
+            step_active = 1;
+            active_start_sample = sample_count;
+        }
+    }
+
+    /*
+     * State 1:
+     * Z angle dropped. Count step when it returns upward.
+     */
+    else
+    {
+        if(z_deg_filtered > Z_STEP_RETURN_DEG)
+        {
+            step_count++;
+            last_step_sample = sample_count;
+            step_active = 0;
+
+            Report("STEP COUNT = %lu | Z_deg_filtered = %.2f\n\r",
+                   step_count,
+                   z_deg_filtered);
+
+            OLED_ShowStepCount(step_count);
+        }
+
+        if((sample_count - active_start_sample) > STEP_MAX_ACTIVE_SAMPLES)
+        {
+            step_active = 0;
+        }
+    }
+}
+
+//*****************************************************************************
+// PUSHUP COUNTER
+//*****************************************************************************
+
+static void PushupCounter_Reset(void)
+{
+    pushup_count = 0;
+    pushup_sample_count = 0;
+    last_pushup_sample = 0;
+    floor_near_previous = 0;
+
+    OLED_ShowError("PUSHUP", "0");
+
+    Report("\n\rPUSHUP MODE selected/reset.\n\r");
+    Report("Pushup count increments when IR sensor detects floor close.\n\r\n\r");
+}
+
+static void PushupCounter_Update(float x_g,
+                                 float y_g,
+                                 float z_g,
+                                 float x_deg,
+                                 float y_deg,
+                                 float z_deg)
+{
+    unsigned char floor_near;
+    char buffer[16];
+
+    /*
+     * Accelerometer values are unused for now.
+     * Later, we can combine accelerometer + IR for better pushup detection.
+     */
+    (void)x_g;
+    (void)y_g;
+    (void)z_g;
+    (void)x_deg;
+    (void)y_deg;
+    (void)z_deg;
+
+    pushup_sample_count++;
+
+    floor_near = IRSensor_IsFloorNear();
+
+    /*
+     * Count only on transition:
+     *
+     *   floor far  -> floor near
+     *
+     * This prevents multiple counts while you stay close to the floor.
+     */
+    if((floor_near == 1) &&
+       (floor_near_previous == 0) &&
+       ((pushup_sample_count - last_pushup_sample) >= PUSHUP_MIN_INTERVAL_SAMPLES))
+    {
+        pushup_count++;
+        last_pushup_sample = pushup_sample_count;
+
+        sprintf(buffer, "%lu", pushup_count);
+
+        Report("PUSHUP COUNT = %lu\n\r", pushup_count);
+
+        OLED_ShowError("PUSHUP", buffer);
+    }
+
+    floor_near_previous = floor_near;
+}
+
+//*****************************************************************************
+// MODE HANDLER
+//*****************************************************************************
+
+static void HandleModeButtons(void)
+{
+    int upload_result;
+
+    /*
+     * Button 1 = STEP MODE button.
+     */
+    if(ButtonStep_PressedEvent())
+    {
+        if(current_mode == APP_MODE_STEP)
+        {
+            /*
+             * Already in STEP MODE:
+             * Save/upload current step count, then reset.
+             */
+            UART_PRINT("\n\rSTEP button pressed again.\n\r");
+            UART_PRINT("Saving step count = %lu to AWS...\n\r", step_count);
+
+            OLED_ShowError("SAVING", "STEP");
+
+            upload_result = AWS_PostCounter("step", step_count);
+
+            if(upload_result == SUCCESS)
+            {
+                UART_PRINT("Step count uploaded successfully.\n\r");
+                OLED_ShowError("STEP", "SAVED");
+            }
+            else
+            {
+                UART_PRINT("Step upload failed. Error = %d\n\r", upload_result);
+                OLED_ShowError("STEP", "FAIL");
+            }
+
+            MAP_UtilsDelay(2000000);
+
+            StepCounter_Reset();
+        }
+        else
+        {
+            /*
+             * Not in STEP MODE:
+             * Switch to STEP MODE and reset step counter.
+             */
+            current_mode = APP_MODE_STEP;
+            StepCounter_Reset();
+        }
+    }
+
+    /*
+     * Button 2 = PUSHUP MODE button.
+     */
+    if(ButtonPushup_PressedEvent())
+    {
+        if(current_mode == APP_MODE_PUSHUP)
+        {
+            /*
+             * Already in PUSHUP MODE:
+             * Save/upload current pushup count, then reset.
+             */
+            UART_PRINT("\n\rPUSHUP button pressed again.\n\r");
+            UART_PRINT("Saving pushup count = %lu to AWS...\n\r", pushup_count);
+
+            OLED_ShowError("SAVING", "PUSHUP");
+
+            upload_result = AWS_PostCounter("pushup", pushup_count);
+
+            if(upload_result == SUCCESS)
+            {
+                UART_PRINT("Pushup count uploaded successfully.\n\r");
+                OLED_ShowError("PUSHUP", "SAVED");
+            }
+            else
+            {
+                UART_PRINT("Pushup upload failed. Error = %d\n\r", upload_result);
+                OLED_ShowError("PUSHUP", "FAIL");
+            }
+
+            MAP_UtilsDelay(2000000);
+
+            PushupCounter_Reset();
+        }
+        else
+        {
+            /*
+             * Not in PUSHUP MODE:
+             * Switch to PUSHUP MODE and reset pushup counter.
+             */
+            current_mode = APP_MODE_PUSHUP;
+            PushupCounter_Reset();
+        }
+    }
+}
+//*****************************************************************************
+// BMA222 READ + MODE LOOP
+//*****************************************************************************
+
+static void PrintBMA222Data(void)
+{
+    int iRetVal;
+    unsigned char reg;
+    unsigned char chipId;
+    unsigned char data[6];
+
+    signed char x_raw;
+    signed char y_raw;
+    signed char z_raw;
+
+    float x_g;
+    float y_g;
+    float z_g;
+
+    float x_deg;
+    float y_deg;
+    float z_deg;
+
+    unsigned long print_counter = 0;
+
+    /*
+     * Check BMA222 chip ID.
+     */
+    reg = BMA222_CHIP_ID;
+    iRetVal = I2C_IF_ReadFrom(BMA222_ADDR, &reg, 1, &chipId, 1);
+
+    if(iRetVal < 0)
+    {
+        Report("BMA222 not detected.\n\r");
+        Report("Check J2/J3 jumpers and I2C address 0x18.\n\r");
+
+        OLED_ShowError("BMA222", "NOT FOUND");
+
+        return;
+    }
+
+    Report("BMA222 detected. CHIP ID = 0x%02x\n\r", chipId);
+
+    current_mode = APP_MODE_STEP;
+    StepCounter_Reset();
+
+    while(1)
+    {
+        /*
+         * Check buttons every loop.
+         */
+        HandleModeButtons();
+
+        reg = BMA222_DATA_START;
+
+        /*
+         * Read 6 bytes starting from 0x02:
+         *   data[0] = X LSB/status
+         *   data[1] = X acceleration MSB
+         *   data[2] = Y LSB/status
+         *   data[3] = Y acceleration MSB
+         *   data[4] = Z LSB/status
+         *   data[5] = Z acceleration MSB
+         */
+        iRetVal = I2C_IF_ReadFrom(BMA222_ADDR, &reg, 1, data, 6);
+
+        if(iRetVal == SUCCESS)
+        {
+            x_raw = (signed char)data[1];
+            y_raw = (signed char)data[3];
+            z_raw = (signed char)data[5];
+
+            /*
+             * Default BMA222 range after reset is +/-2g.
+             * Sensitivity at +/-2g = 64 LSB/g.
+             */
+            x_g = ((float)x_raw) / 64.0f;
+            y_g = ((float)y_raw) / 64.0f;
+            z_g = ((float)z_raw) / 64.0f;
+
+            /*
+             * Axis angle relative to gravity vector.
+             */
+            x_deg = CalculateAxisAngleDeg(x_g, x_g, y_g, z_g);
+            y_deg = CalculateAxisAngleDeg(y_g, x_g, y_g, z_g);
+            z_deg = CalculateAxisAngleDeg(z_g, x_g, y_g, z_g);
+
+            if(current_mode == APP_MODE_STEP)
+            {
+                StepCounter_UpdateFromZAngle(z_deg);
+            }
+            else if(current_mode == APP_MODE_PUSHUP)
+            {
+                PushupCounter_Update(x_g, y_g, z_g, x_deg, y_deg, z_deg);
+            }
+
+            /*
+             * Print to terminal every 0.5 seconds.
+             */
+            print_counter++;
+
+            if(print_counter >= TERMINAL_PRINT_INTERVAL_SAMPLES)
+            {
+                print_counter = 0;
+
+                if(current_mode == APP_MODE_STEP)
+                {
+                    Report("MODE = STEP | X_deg = %.2f, Y_deg = %.2f, Z_deg = %.2f | Z_filt = %.2f | Active = %d | Steps = %lu\n\r",
+                           x_deg,
+                           y_deg,
+                           z_deg,
+                           z_deg_filtered,
+                           step_active,
+                           step_count);
+                }
+                else
+                {
+                    Report("MODE = PUSHUP | X_deg = %.2f, Y_deg = %.2f, Z_deg = %.2f | Pushups = %lu\n\r",
+                           x_deg,
+                           y_deg,
+                           z_deg,
+                           pushup_count);
+                }
+            }
+        }
+        else
+        {
+            Report("I2C read failed.\n\r");
+        }
+
+        MAP_UtilsDelay(SAMPLE_DELAY_CYCLES);
+    }
+}
+
+
+//*****************************************************************************
+// AWS FUNCTIONS
+//*****************************************************************************
+
 static int set_time(void)
 {
     long retVal;
-    g_time.tm_day  = DATE;
-    g_time.tm_mon  = MONTH;
+
+    g_time.tm_day = DATE;
+    g_time.tm_mon = MONTH;
     g_time.tm_year = YEAR;
-    g_time.tm_sec  = SECOND;
+    g_time.tm_sec = SECOND;
     g_time.tm_hour = HOUR;
-    g_time.tm_min  = MINUTE;
+    g_time.tm_min = MINUTE;
+
     retVal = sl_DevSet(SL_DEVICE_GENERAL_CONFIGURATION,
                        SL_DEVICE_GENERAL_CONFIGURATION_DATE_TIME,
-                       sizeof(SlDateTime), (unsigned char *)(&g_time));
+                       sizeof(SlDateTime),
+                       (unsigned char *)(&g_time));
+
     ASSERT_ON_ERROR(retVal);
+
     return SUCCESS;
 }
 
-/* -----------------------------------------------------------------------
- * http_post_workout
- *   Builds and sends a JSON body describing the completed workout session.
- *   Uses the same send/recv pattern as Lab 4 http_post().
- *
- *   JSON bodies:
- *     Push-up:  {"state":{"desired":{"mode":"pushup","reps":N,"time_s":T}}}
- *     Running:  {"state":{"desired":{"mode":"running","steps":N,"time_s":T}}}
- * ----------------------------------------------------------------------- */
-static int http_post_workout(int iTLSSockID,
-                             WorkoutMode_t mode,
-                             uint32_t count,
-                             uint32_t duration_s)
+static int AWS_Init(void)
 {
-    char acSendBuff[512];
-    char acRecvbuff[1460];
-    char cCLLength[16];
-    char *pcBufHeaders;
-    char body[128];
-    int  lRetVal = 0;
+    long lRetVal;
 
-    /* Build JSON body */
-    if (mode == MODE_PUSHUP)
-        snprintf(body, sizeof(body),
-            "{\"state\":{\"desired\":{\"mode\":\"pushup\","
-            "\"reps\":%lu,\"time_s\":%lu}}}",
-            (unsigned long)count, (unsigned long)duration_s);
-    else
-        snprintf(body, sizeof(body),
-            "{\"state\":{\"desired\":{\"mode\":\"running\","
-            "\"steps\":%lu,\"time_s\":%lu}}}",
-            (unsigned long)count, (unsigned long)duration_s);
-
-    int bodyLen = strlen(body);
-
-    /* Build HTTP request — same order as Lab 4 http_post() */
-    pcBufHeaders = acSendBuff;
-    strcpy(pcBufHeaders, POSTHEADER);  pcBufHeaders += strlen(POSTHEADER);
-    strcpy(pcBufHeaders, HOSTHEADER);  pcBufHeaders += strlen(HOSTHEADER);
-    strcpy(pcBufHeaders, CHEADER);     pcBufHeaders += strlen(CHEADER);
-    strcpy(pcBufHeaders, CTHEADER);    pcBufHeaders += strlen(CTHEADER);
-    strcpy(pcBufHeaders, CLHEADER1);   pcBufHeaders += strlen(CLHEADER1);
-    snprintf(cCLLength, sizeof(cCLLength), "%d", bodyLen);
-    strcpy(pcBufHeaders, cCLLength);   pcBufHeaders += strlen(cCLLength);
-    strcpy(pcBufHeaders, CLHEADER2);   pcBufHeaders += strlen(CLHEADER2);
-    strcpy(pcBufHeaders, body);        pcBufHeaders += bodyLen;
-
-    UART_PRINT("HTTP POST payload:\r\n%s\r\n", acSendBuff);
-
-    lRetVal = sl_Send(iTLSSockID, acSendBuff, strlen(acSendBuff), 0);
-    if (lRetVal < 0)
-    {
-        UART_PRINT("POST send failed: %d\r\n", lRetVal);
-        sl_Close(iTLSSockID);
-        return lRetVal;
-    }
-
-    lRetVal = sl_Recv(iTLSSockID, acRecvbuff, sizeof(acRecvbuff) - 1, 0);
-    if (lRetVal < 0)
-    {
-        UART_PRINT("POST recv failed: %d\r\n", lRetVal);
-        return lRetVal;
-    }
-    acRecvbuff[lRetVal] = '\0';
-    UART_PRINT("Server response:\r\n%s\r\n\r\n", acRecvbuff);
-
-    /* Return 0 on HTTP 200, negative otherwise */
-    return (strstr(acRecvbuff, "200") != NULL) ? 0 : -1;
-}
-
-/* -----------------------------------------------------------------------
- * OLED screen helpers
- * ----------------------------------------------------------------------- */
-static void Screen_Idle(void)
-{
-    OLED_FillScreen(OLED_BLACK);
-    OLED_DrawString(10, 10, "FITNESS TRAINER", OLED_CYAN,  OLED_BLACK);
-    OLED_DrawString(18, 30, "Press SW3",       OLED_WHITE, OLED_BLACK);
-    OLED_DrawString(18, 42, "to start",        OLED_WHITE, OLED_BLACK);
-}
-
-static void Screen_ModeSelect(WorkoutMode_t mode)
-{
-    OLED_FillScreen(OLED_BLACK);
-    OLED_DrawString(14, 10, "SELECT MODE",     OLED_YELLOW, OLED_BLACK);
-    OLED_DrawString(10, 36, "SW2: cycle mode", OLED_GRAY,   OLED_BLACK);
-    OLED_DrawString(10, 48, "SW3: confirm",    OLED_GRAY,   OLED_BLACK);
-    if (mode == MODE_PUSHUP)
-    {
-        OLED_DrawRect(10, 60, 108, 18, OLED_GREEN);
-        OLED_DrawString(22, 64, "> PUSH-UPS <", OLED_BLACK, OLED_GREEN);
-        OLED_DrawString(28, 84,  "  Running  ",  OLED_WHITE, OLED_BLACK);
-    }
-    else
-    {
-        OLED_DrawString(28, 60,  "  Push-ups  ", OLED_WHITE, OLED_BLACK);
-        OLED_DrawRect(10, 78, 108, 18, OLED_GREEN);
-        OLED_DrawString(22, 82, "> RUNNING  <", OLED_BLACK, OLED_GREEN);
-    }
-}
-
-static void Screen_TrackingPushup(uint32_t reps)
-{
-    OLED_FillScreen(OLED_BLACK);
-    OLED_DrawString(20, 6,  "PUSH-UP MODE", OLED_CYAN,  OLED_BLACK);
-    OLED_DrawString(10, 24, "Reps:",        OLED_WHITE, OLED_BLACK);
-    OLED_Printf    (46, 24, OLED_GREEN, OLED_BLACK, "%lu", reps);
-    OLED_DrawString(10, 110,"SW2: Stop",    OLED_GRAY,  OLED_BLACK);
-}
-
-static void Screen_TrackingRunning(uint32_t steps)
-{
-    OLED_FillScreen(OLED_BLACK);
-    OLED_DrawString(16, 6,  "RUNNING MODE", OLED_CYAN,  OLED_BLACK);
-    OLED_DrawString(10, 24, "Steps:",       OLED_WHITE, OLED_BLACK);
-    OLED_Printf    (52, 24, OLED_GREEN, OLED_BLACK, "%lu", steps);
-    OLED_DrawString(10, 110,"SW2: Stop",    OLED_GRAY,  OLED_BLACK);
-}
-
-static void Screen_Feedback(WorkoutMode_t mode, uint32_t count,
-                             uint32_t duration_s)
-{
-    OLED_FillScreen(OLED_BLACK);
-    OLED_DrawString(20, 6, "WORKOUT DONE!", OLED_YELLOW, OLED_BLACK);
-    if (mode == MODE_PUSHUP)
-        OLED_Printf(10, 30, OLED_WHITE, OLED_BLACK, "Reps:  %lu", count);
-    else
-        OLED_Printf(10, 30, OLED_WHITE, OLED_BLACK, "Steps: %lu", count);
-    OLED_Printf(10, 46, OLED_WHITE, OLED_BLACK, "Time:  %lus", duration_s);
-    OLED_DrawString(10, 70, "Uploading...", OLED_GRAY, OLED_BLACK);
-}
-
-static void Screen_Uploaded(bool ok)
-{
-    OLED_DrawRect(0, 68, 128, 20, OLED_BLACK);
-    if (ok)
-        OLED_DrawString(14, 72, "Upload: OK  ", OLED_GREEN, OLED_BLACK);
-    else
-        OLED_DrawString(10, 72, "Upload: FAIL", OLED_RED,   OLED_BLACK);
-    OLED_DrawString(16, 100, "Returning...", OLED_GRAY, OLED_BLACK);
-    MAP_UtilsDelay(40000000); /* ~3 s */
-}
-
-/* -----------------------------------------------------------------------
- * main
- * ----------------------------------------------------------------------- */
-void main(void)
-{
-    long lRetVal = -1;
-
-    /* --- Board init (identical to Lab 4) --- */
-    BoardInit();
-    PinMuxConfig();
-    GPIO_Init();
-    InitTerm();
-    ClearTerm();
-    UART_PRINT("Smart Fitness Trainer — booting\r\n");
-
-    /* --- Peripheral init --- */
-    I2C_IF_Open(I2C_MASTER_MODE_FST);
-    OLED_Init();
-    Accel_Init();
-    IR_Init();
-
-    /* --- Timer (sensor sampling) --- */
-    Timer_Init();
-
-    /* --- Wi-Fi + TLS (same flow as Lab 4) --- */
-    OLED_DrawString(8, 100, "Connecting WiFi", OLED_GRAY, OLED_BLACK);
+    UART_PRINT("\n\rInitializing AWS connection...\n\r");
 
     g_app_config.host = SERVER_NAME;
-    g_app_config.port = GOOGLE_DST_PORT;
+    g_app_config.port = AWS_DST_PORT;
 
     lRetVal = connectToAccessPoint();
-    UART_PRINT("WiFi connect: %ld\r\n", lRetVal);
+    UART_PRINT("WiFi connect returned: %d\n\r", lRetVal);
 
-    lRetVal = set_time();
-    UART_PRINT("Set time: %ld\r\n", lRetVal);
-    if (lRetVal < 0)
+    if(lRetVal < 0)
     {
-        UART_PRINT("Unable to set time — TLS uploads disabled\r\n");
+        UART_PRINT("WiFi connection failed.\n\r");
+        g_aws_ready = 0;
+        return lRetVal;
     }
 
-    bool wifi_ok = (lRetVal == 0);
+    lRetVal = set_time();
+    UART_PRINT("Set time returned: %d\n\r", lRetVal);
 
-    /* --- Show idle screen --- */
-    Screen_Idle();
-
-    /* -----------------------------------------------------------------------
-     * Main state-machine loop
-     * ----------------------------------------------------------------------- */
-    uint32_t last_display_tick = 0;
-    uint32_t count_display     = 0;
-
-    while (1)
+    if(lRetVal < 0)
     {
-        bool sw2 = false, sw3 = false;
+        UART_PRINT("Unable to set time in the device.\n\r");
+        g_aws_ready = 0;
+        return lRetVal;
+    }
 
-        MAP_IntMasterDisable();
-        sw2 = g_sw2_event; g_sw2_event = false;
-        sw3 = g_sw3_event; g_sw3_event = false;
-        MAP_IntMasterEnable();
+    g_tls_sock_id = tls_connect();
+    UART_PRINT("TLS connect returned: %d\n\r", g_tls_sock_id);
 
-        switch (g_state)
+    if(g_tls_sock_id < 0)
+    {
+        UART_PRINT("TLS connection failed.\n\r");
+        g_aws_ready = 0;
+        return g_tls_sock_id;
+    }
+
+    g_aws_ready = 1;
+
+    UART_PRINT("AWS connection ready.\n\r");
+
+    return SUCCESS;
+}
+
+static int AWS_PostCounter(const char *mode_name, unsigned long count_value)
+{
+    char acSendBuff[768];
+    char acRecvbuff[1460];
+    char cCLLength[32];
+    char jsonBody[256];
+    char *pcBufHeaders;
+    int dataLength;
+    int lRetVal;
+
+    if(g_aws_ready == 0 || g_tls_sock_id < 0)
+    {
+        UART_PRINT("AWS not ready. Trying to reconnect...\n\r");
+
+        lRetVal = AWS_Init();
+
+        if(lRetVal < 0)
         {
-            /* ---- IDLE ---- */
-            case STATE_IDLE:
-                if (sw3)
-                {
-                    g_mode  = MODE_PUSHUP;
-                    g_state = STATE_MODE_SELECT;
-                    Screen_ModeSelect(g_mode);
-                }
-                break;
-
-            /* ---- MODE_SELECT ---- */
-            case STATE_MODE_SELECT:
-                if (sw2)
-                {
-                    g_mode = (g_mode == MODE_PUSHUP) ? MODE_RUNNING : MODE_PUSHUP;
-                    Screen_ModeSelect(g_mode);
-                }
-                if (sw3)
-                {
-                    if (g_mode == MODE_PUSHUP)
-                    {
-                        IR_ResetRepCount();
-                        g_state = STATE_PUSHUP_TRACK;
-                        Screen_TrackingPushup(0);
-                    }
-                    else
-                    {
-                        Accel_ResetStepCount();
-                        g_state = STATE_RUNNING_TRACK;
-                        Screen_TrackingRunning(0);
-                    }
-                    g_session_start   = g_tick_ms;
-                    last_display_tick = g_tick_ms;
-                    count_display     = 0;
-                }
-                break;
-
-            /* ---- PUSHUP_TRACK ---- */
-            case STATE_PUSHUP_TRACK:
-            {
-                uint32_t reps = IR_GetRepCount();
-                uint32_t now  = g_tick_ms;
-
-                if ((now - last_display_tick) >= 500 || reps != count_display)
-                {
-                    Screen_TrackingPushup(reps);
-                    last_display_tick = now;
-                    count_display     = reps;
-                }
-
-                uint32_t elapsed_s = (now - g_session_start) / 1000;
-                if (sw2 || elapsed_s >= SESSION_TIMEOUT_S)
-                {
-                    g_state = STATE_FEEDBACK;
-                    Screen_Feedback(MODE_PUSHUP, reps, elapsed_s);
-                }
-                break;
-            }
-
-            /* ---- RUNNING_TRACK ---- */
-            case STATE_RUNNING_TRACK:
-            {
-                uint32_t steps = Accel_GetStepCount();
-                uint32_t now   = g_tick_ms;
-
-                if ((now - last_display_tick) >= 500 || steps != count_display)
-                {
-                    Screen_TrackingRunning(steps);
-                    last_display_tick = now;
-                    count_display     = steps;
-                }
-
-                uint32_t elapsed_s = (now - g_session_start) / 1000;
-                if (sw2 || elapsed_s >= SESSION_TIMEOUT_S)
-                {
-                    g_state = STATE_FEEDBACK;
-                    Screen_Feedback(MODE_RUNNING, steps, elapsed_s);
-                }
-                break;
-            }
-
-            /* ---- FEEDBACK → UPLOAD ---- */
-            case STATE_FEEDBACK:
-            {
-                uint32_t final_count = (g_mode == MODE_PUSHUP)
-                                       ? IR_GetRepCount()
-                                       : Accel_GetStepCount();
-                uint32_t duration_s  = (g_tick_ms - g_session_start) / 1000;
-                bool ok = false;
-
-                g_state = STATE_UPLOAD;
-
-                if (wifi_ok)
-                {
-                    /* Open a fresh TLS socket for each upload (same as Lab 4) */
-                    lRetVal = tls_connect();
-                    UART_PRINT("TLS connect: %ld\r\n", lRetVal);
-                    if (lRetVal >= 0)
-                    {
-                        ok = (http_post_workout(lRetVal, g_mode,
-                                                final_count, duration_s) == 0);
-                        sl_Close(lRetVal);
-                    }
-                    else
-                    {
-                        ERR_PRINT(lRetVal);
-                    }
-                }
-
-                Screen_Uploaded(ok);
-                UART_PRINT("Session done — count=%lu upload=%s\r\n",
-                           (unsigned long)final_count, ok ? "OK" : "FAIL");
-
-                g_state = STATE_IDLE;
-                Screen_Idle();
-                break;
-            }
-
-            case STATE_UPLOAD:
-            default:
-                break;
+            UART_PRINT("AWS reconnect failed. Upload skipped.\n\r");
+            return lRetVal;
         }
+    }
 
-        MAP_UtilsDelay(80000); /* ~6 ms yield */
+    /*
+     * AWS IoT shadow JSON payload.
+     *
+     * Example:
+     * {
+     *   "state": {
+     *     "desired": {
+     *       "mode": "step",
+     *       "count": 12
+     *     }
+     *   }
+     * }
+     */
+    sprintf(jsonBody,
+            "{"
+                "\"state\":{"
+                    "\"desired\":{"
+                        "\"mode\":\"%s\","
+                        "\"count\":%lu"
+                    "}"
+                "}"
+            "}\r\n\r\n",
+            mode_name,
+            count_value);
+
+    dataLength = strlen(jsonBody);
+
+    pcBufHeaders = acSendBuff;
+
+    strcpy(pcBufHeaders, POSTHEADER);
+    pcBufHeaders += strlen(POSTHEADER);
+
+    strcpy(pcBufHeaders, HOSTHEADER);
+    pcBufHeaders += strlen(HOSTHEADER);
+
+    strcpy(pcBufHeaders, CHEADER);
+    pcBufHeaders += strlen(CHEADER);
+
+    strcpy(pcBufHeaders, CTHEADER);
+    pcBufHeaders += strlen(CTHEADER);
+
+    strcpy(pcBufHeaders, CLHEADER1);
+    pcBufHeaders += strlen(CLHEADER1);
+
+    sprintf(cCLLength, "%d", dataLength);
+    strcpy(pcBufHeaders, cCLLength);
+    pcBufHeaders += strlen(cCLLength);
+
+    strcpy(pcBufHeaders, CLHEADER2);
+    pcBufHeaders += strlen(CLHEADER2);
+
+    strcpy(pcBufHeaders, jsonBody);
+    pcBufHeaders += strlen(jsonBody);
+
+    UART_PRINT("\n\rSending AWS POST:\n\r");
+    UART_PRINT(acSendBuff);
+    UART_PRINT("\n\r");
+
+    lRetVal = sl_Send(g_tls_sock_id, acSendBuff, strlen(acSendBuff), 0);
+
+    if(lRetVal < 0)
+    {
+        UART_PRINT("POST failed. Error Number: %d\n\r", lRetVal);
+
+        sl_Close(g_tls_sock_id);
+        g_tls_sock_id = -1;
+        g_aws_ready = 0;
+
+        return lRetVal;
+    }
+
+    lRetVal = sl_Recv(g_tls_sock_id, &acRecvbuff[0], sizeof(acRecvbuff), 0);
+
+    if(lRetVal < 0)
+    {
+        UART_PRINT("Receive failed. Error Number: %d\n\r", lRetVal);
+
+        sl_Close(g_tls_sock_id);
+        g_tls_sock_id = -1;
+        g_aws_ready = 0;
+
+        return lRetVal;
+    }
+
+    acRecvbuff[lRetVal] = '\0';
+
+    UART_PRINT("AWS response:\n\r");
+    UART_PRINT(acRecvbuff);
+    UART_PRINT("\n\r\n\r");
+
+    return SUCCESS;
+}
+//*****************************************************************************
+// MAIN
+//*****************************************************************************
+
+void main()
+{
+    BoardInit();
+
+    /*
+     * Original TI i2c_demo pinmux.
+     * This configures UART and I2C for the onboard BMA222.
+     */
+    PinMuxConfig();
+
+    /*
+     * OLED-specific SPI and GPIO pinmux.
+     */
+    OLED_PinMuxConfig();
+
+    /*
+     * Onboard button GPIO setup.
+     */
+    Buttons_Init();
+
+    IRSensor_Init();
+
+    /*
+     * UART terminal.
+     */
+    InitTerm();
+    ClearTerm();
+
+    I2C_IF_Open(I2C_MASTER_MODE_FST);
+
+    OLED_SPI_Init();
+
+    DisplayBanner(APP_NAME);
+
+    OLED_Init();
+
+    OLED_ShowStartupScreen();
+    MAP_UtilsDelay(2000000);
+
+    /*
+     * Connect to WiFi + AWS IoT once at startup.
+     * If this fails, counting still works. Upload will retry when button is pressed.
+     */
+    AWS_Init();
+
+    PrintBMA222Data();
+
+    while(1)
+    {
     }
 }
