@@ -28,7 +28,7 @@ A standalone embedded fitness tracker that:
 | SPI CS | Pin 8 | 8 | P2 | OLED chip select |
 | OLED D/C | Pin 61 | 61 | P1 | OLED data/command GPIO |
 | OLED RESET | Pin 62 | 62 | P1 | OLED reset GPIO |
-| IR Sensor Output | Pin 18 | 22 | P2 | Digital IN, active LOW |
+| IR Sensor Output | Pin 18 | 28 | P1 | Digital IN, active LOW |
 | SW2 (Mode) | Pin 4 | 4 | P1 | Onboard button (pull-up) |
 | SW3 (Start) | Pin 16 | 55 | P2 | Onboard button (pull-up) |
 | 3.3V | P1 top | — | P1 | Power for OLED + IR sensor |
