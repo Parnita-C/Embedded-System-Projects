@@ -137,8 +137,7 @@ Edit `src/wifi_upload.c`:
 |---|---|---|
 | Start session | SW3 | IDLE |
 | Cycle mode (Push-up / Running) | SW2 | MODE_SELECT |
-| Confirm mode | SW3 | MODE_SELECT |
-| Stop session | SW2 | TRACKING |
+| Stop session | SW3 | TRACKING |
 
 After stopping, the OLED shows your count + time, uploads to Wi-Fi,
 then returns to IDLE after 3 seconds.
